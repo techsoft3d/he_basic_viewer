@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glad.h>
@@ -19,29 +20,25 @@
 /* #define INPUT_FILE "/pmi/PMI_Sample/asm/CV5_Assy_Sample_.CATProduct" */
 #define INPUT_FILE "/prc/_micro engine.prc"
 
-struct GLObject {
-    GLuint gl_vao;
+#define GL_SHADER_COORD_LOCATION  0
+#define GL_SHADER_NORMAL_LOCATION 1
+
+typedef struct {
+    mat4x4  mat_transform_model;
+    GLuint  gl_vao;
     GLsizei gl_indices_count;
-};
+} SceneObject;
 
-struct SceneObject {
-    A3DRiRepresentationItem* hnd_ri;
-    mat4x4 mat_transform_model;
-};
+typedef struct {
+    std::vector<SceneObject> objects;
 
-struct GLScene {
-    std::vector<SceneObject> scene_objects;
-    std::unordered_map<A3DRiRepresentationItem*, GLObject> gl_objects;
-
-    GLint shader_location_coord;
-    GLint shader_location_normal;
-
-    std::vector<GLuint> pouet;
+    std::unordered_map<A3DRiRepresentationItem*, std::pair<GLuint, GLsizei>> ri_to_gl;
     std::vector<GLuint> gl_vaos;
     std::vector<GLuint> gl_vbos;
-};
+} TraverseData;
 
 A3DStatus code = A3D_SUCCESS;
+
 
 A3DAsmModelFile* load_model_file(const char* path)
 {
@@ -63,6 +60,103 @@ A3DAsmModelFile* load_model_file(const char* path)
     return model_file;
 }
 
+void glfw_error_callback(int error, const char* description)
+{
+    fprintf(stderr, "Error: %s\n", description);
+}
+ 
+void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+}
+
+GLFWwindow* glfw_prepare()
+{
+ 
+    glfwSetErrorCallback(glfw_error_callback);
+ 
+    if (!glfwInit())
+        exit(EXIT_FAILURE);
+ 
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+/* #ifdef __APPLE__ */
+/* 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); */
+/* #endif */
+ 
+    GLFWwindow* window = glfwCreateWindow(800, 600, "MeshViewer", NULL, NULL);
+    if (!window)
+    {
+        glfwTerminate();
+        exit(EXIT_FAILURE);
+    }
+ 
+    glfwSetKeyCallback(window, glfw_key_callback);
+ 
+    glfwMakeContextCurrent(window);
+    gladLoadGL();
+    glfwSwapInterval(1);
+
+    return window;
+}
+
+GLuint gl_prepare_program()
+{
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    const char* vertex_shader_text =
+   "#version 420 core\n"
+   "layout (location = 0) in vec3 vPos;\n"
+   "layout (location = 1) in vec3 vNorm;\n"
+   "out vec3 FragNormal;\n"
+   "uniform mat4 M;\n"
+   "uniform mat4 V;\n"
+   "uniform mat4 P;\n"
+   "void main()\n"
+   "{\n"
+       "gl_Position = P * V * M * vec4(vPos, 1.0f);\n"
+       "FragNormal = normalize(mat3(transpose(inverse(M))) * vNorm);\n"
+   "}\n";
+
+
+    const char* fragment_shader_text =
+   "#version 420 core\n"
+   "out vec4 FragColor;\n"
+   "\n"
+   "in vec3 FragNormal;\n"
+     "\n"
+   "void main()\n"
+   "{\n"
+       "vec3 normal = normalize(FragNormal);\n"
+       "vec3 lightDirection = normalize(vec3(1.0, 1.0, 1.0));\n"
+       "float diff = max(dot(normal, lightDirection), 0.0);\n"
+       "vec4 diffuseColor = vec4(0.7, 0.7, 0.7, 1.0);\n"
+       "FragColor = diff * diffuseColor;\n"
+   "}\n";
+
+    GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertex_shader, 1, &vertex_shader_text, NULL);
+    glCompileShader(vertex_shader);
+ 
+    GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragment_shader, 1, &fragment_shader_text, NULL);
+    glCompileShader(fragment_shader);
+ 
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    return program;
+}
+ 
 A3DAsmPartDefinition* get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po)
 {
     if(hnd_po == 0) {
@@ -152,9 +246,7 @@ void mat4x4_from_transformation(const A3DMiscTransformation* hnd_transformation,
 }
 
 
-float xmax=-10000, ymax=-10000, zmax=-10000, xmin=10000, ymin=10000, zmin=10000;
-
-GLObject gl_make_buffers(A3DMeshData* const data_mesh, GLScene* const gl_scene)
+std::pair<GLuint, GLsizei> gl_make_buffers(A3DMeshData* const data_mesh, TraverseData* const data_traverse)
 {
     std::vector<GLuint> index_buffer;
     std::vector<GLdouble> vertex_buffer;
@@ -170,12 +262,9 @@ GLObject gl_make_buffers(A3DMeshData* const data_mesh, GLScene* const gl_scene)
     // vertex_index|normal_index -> gl_index
     std::unordered_map<uint64_t, GLuint> index_cache;
 
-
-
     for (A3DUns32 face_i = 0; face_i < data_mesh->m_uiFaceSize; ++face_i) {
         A3DUns32 n_triangles = data_mesh->m_puiTriangleCountPerFace[face_i];
-        if (n_triangles == 0)
-        {
+        if (n_triangles == 0) {
             continue;
         }
         const A3DUns32* ptr_coord_index = data_mesh->m_ppuiPointIndicesPerFace[face_i];
@@ -194,8 +283,6 @@ GLObject gl_make_buffers(A3DMeshData* const data_mesh, GLScene* const gl_scene)
                 auto y = data_mesh->m_pdCoords[coord_index+1];
                 auto z = data_mesh->m_pdCoords[coord_index+2];
 
-                if (x > xmax) xmax=x; if (y > ymax) ymax=y; if (z > zmax) zmax=z;
-                if (x < xmin) xmin=x; if (y < ymin) ymin=y; if (z < zmin) zmin=z;
                 // Create the coordinates
                 vertex_buffer.insert(vertex_buffer.end(), {
                     data_mesh->m_pdCoords[coord_index],
@@ -210,10 +297,6 @@ GLObject gl_make_buffers(A3DMeshData* const data_mesh, GLScene* const gl_scene)
         }
     }
 
-    printf("Min: %f / %f / %f\nMax: %f / %f / %f\n", xmin, ymin, zmin, xmax, ymax, zmax);
-
-    index_cache.clear();
-    
     GLuint gl_vao = 0;
     glGenVertexArrays(1, &gl_vao);
     glBindVertexArray(gl_vao);
@@ -228,25 +311,24 @@ GLObject gl_make_buffers(A3DMeshData* const data_mesh, GLScene* const gl_scene)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bo_index);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer.size() * sizeof(GLuint), index_buffer.data(), GL_STATIC_DRAW);
 
-    glEnableVertexAttribArray(gl_scene->shader_location_coord);
-    glVertexAttribPointer(gl_scene->shader_location_coord, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) 0);
-    glEnableVertexAttribArray(gl_scene->shader_location_normal);
-    glVertexAttribPointer(gl_scene->shader_location_normal, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) (3 * sizeof(GLdouble)));
+    glEnableVertexAttribArray(GL_SHADER_COORD_LOCATION);
+    glVertexAttribPointer(GL_SHADER_COORD_LOCATION, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) 0);
+    glEnableVertexAttribArray(GL_SHADER_NORMAL_LOCATION);
+    glVertexAttribPointer(GL_SHADER_NORMAL_LOCATION, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) (3 * sizeof(GLdouble)));
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    gl_scene->gl_vaos.push_back(gl_vao);
-    gl_scene->gl_vbos.push_back(gl_bo_vertex);
-    gl_scene->gl_vbos.push_back(gl_bo_index);
+    data_traverse->gl_vaos.push_back(gl_vao);
+    data_traverse->gl_vbos.push_back(gl_bo_vertex);
+    data_traverse->gl_vbos.push_back(gl_bo_index);
 
     return {gl_vao, (GLsizei)index_buffer.size()};
 }
 
-void traverse_representation_item(A3DAsmProductOccurrence* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, GLScene* const gl_scene)
+void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
-
     A3DEEntityType ri_type = kA3DTypeUnknown;
     A3DEntityGetType(hnd_ri, &ri_type);
 
@@ -257,7 +339,7 @@ void traverse_representation_item(A3DAsmProductOccurrence* const hnd_ri, A3DMisc
         assert(code == A3D_SUCCESS);
 
         for(A3DUns32 ri_i = 0 ; ri_i < data_ri_set.m_uiRepItemsSize ; ++ri_i) {
-            traverse_representation_item(data_ri_set.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, gl_scene);
+            traverse_representation_item(data_ri_set.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
         }
 
         A3DRiSetGet(0, &data_ri_set);
@@ -275,20 +357,22 @@ void traverse_representation_item(A3DAsmProductOccurrence* const hnd_ri, A3DMisc
         }
         assert(code == A3D_SUCCESS);
 
-        if(gl_scene->gl_objects.find(hnd_ri) == gl_scene->gl_objects.end()) {
-            GLObject gl_object = gl_make_buffers(&data_mesh, gl_scene);
-            gl_scene->gl_objects.insert({ hnd_ri,gl_object }).first;
-            printf("*");
+        auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
+        if(gl_iterator == data_traverse->ri_to_gl.end()) {
+            auto pair = gl_make_buffers(&data_mesh, data_traverse);
+            gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
-        printf("%p\n", hnd_ri);
 
         SceneObject object;
         mat4x4_dup(object.mat_transform_model, mat_transform_world);
-        object.hnd_ri = hnd_ri;
-        gl_scene->scene_objects.push_back(object);
+        object.gl_vao = gl_iterator->second.first;
+        object.gl_indices_count = gl_iterator->second.second;
+        data_traverse->objects.push_back(object);
+
     }
 }
-void traverse_part_definition(A3DAsmProductOccurrence* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, GLScene* const gl_scene)
+
+void traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
     if(hnd_part == 0) {
         return;
@@ -304,13 +388,13 @@ void traverse_part_definition(A3DAsmProductOccurrence* const hnd_part, A3DMiscCa
     assert(code == A3D_SUCCESS);
 
     for (A3DUns32 ri_i = 0 ; ri_i < data_part.m_uiRepItemsSize ; ++ri_i) {
-        traverse_representation_item(data_part.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, gl_scene);
+        traverse_representation_item(data_part.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
     }
 
     A3DAsmPartDefinitionGet(0, &data_part);
 }
 
-void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, GLScene* const gl_scene)
+void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
 
     A3DMiscCascadedAttributes* hnd_attrs_po = 0;
@@ -331,16 +415,16 @@ void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscC
     mat4x4_mul(mat_transform_po_world, mat_transform_world, mat_transform_po_local);
 
     A3DAsmPartDefinition* hnd_part = get_product_occurrence_part_definition(hnd_po);
-    traverse_part_definition(hnd_part, hnd_attrs_po, mat_transform_po_world, gl_scene);
+    traverse_part_definition(hnd_part, hnd_attrs_po, mat_transform_po_world, data_traverse);
 
     for (A3DUns32 po_i = 0 ; po_i < data_po.m_uiPOccurrencesSize ; ++po_i) {
-        traverse_product_occurrence(data_po.m_ppPOccurrences[po_i], hnd_attrs_po, mat_transform_po_world, gl_scene);
+        traverse_product_occurrence(data_po.m_ppPOccurrences[po_i], hnd_attrs_po, mat_transform_po_world, data_traverse);
     }
 
     A3DAsmProductOccurrenceGet(0, &data_po);
 }
 
-void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, GLScene* const gl_scene)
+void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse)
 {
     A3DMiscCascadedAttributes* hnd_attrs_modelfile = 0;
     A3DMiscCascadedAttributesCreate(&hnd_attrs_modelfile);
@@ -354,190 +438,84 @@ void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, GLScene* const gl
     mat4x4_identity(mat_transform);
 
     for (A3DUns32 po_i = 0 ; po_i < data_modelfile.m_uiPOccurrencesSize ; ++po_i) {
-        traverse_product_occurrence(data_modelfile.m_ppPOccurrences[po_i], hnd_attrs_modelfile, mat_transform, gl_scene);
+        traverse_product_occurrence(data_modelfile.m_ppPOccurrences[po_i], hnd_attrs_modelfile, mat_transform, data_traverse);
     }
     
     A3DAsmModelFileGet(0, &data_modelfile);
     A3DMiscCascadedAttributesDelete(hnd_attrs_modelfile);
 }
 
-typedef struct
+ 
+void glfw_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects)
 {
-    float x, y;
-    float r, g, b;
-}Vertices;
- 
-static const char* vertex_shader_text =
-"uniform mat4 M; // Model matrix\n"
-"uniform mat4 V; // View matrix\n"
-"uniform mat4 P; // Projection matrix\n"
-"\n"
-"attribute vec3 vPos;    // Vertex position attribute\n"
-"attribute vec3 vNorm; // Vertex normal attribute\n"
-"\n"
-"varying vec3 FragNormal; // Varying variable to pass normal to the fragment shader\n"
-"\n"
-"void main()\n"
-"{\n"
-    "gl_Position = P * V * M * vec4(vPos, 1.0);\n"
-    "FragNormal = normalize(mat3(transpose(inverse(M))) * vNorm);\n"
-"}\n";
+    GLint p_location = glGetUniformLocation(program, "P");
+    GLint v_location = glGetUniformLocation(program, "V");
+    GLint m_location = glGetUniformLocation(program, "M");
 
-
-static const char* fragment_shader_text =
-"#version 110\n"
-"varying vec3 FragNormal;\n"
-"void main()\n"
-"{\n"
-    "vec3 normal = normalize(FragNormal);\n"
-    "vec3 lightDirection = normalize(vec3(1.0, 1.0, 1.0));\n"
-    "float diff = max(dot(normal, lightDirection), 0.0);\n"
-    "vec4 diffuseColor = vec4(0.7, 0.7, 0.7, 1.0);\n"
-    "gl_FragColor = diff * diffuseColor;\n"
-"}\n";
- 
-static void error_callback(int error, const char* description)
-{
-    fprintf(stderr, "Error: %s\n", description);
-}
- 
-static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-}
- 
- 
-
-int main(int argc, char* argv[])
-{
-    GLFWwindow* window;
-    GLuint vertex_buffer, vertex_shader, fragment_shader, program;
-    GLint p_location;
-    GLint v_location;
-    GLint m_location;
- 
-    glfwSetErrorCallback(error_callback);
- 
-    if (!glfwInit())
-        exit(EXIT_FAILURE);
- 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
- 
-    window = glfwCreateWindow(800, 600, "MeshViewer", NULL, NULL);
-    if (!window)
-    {
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
- 
-    glfwSetKeyCallback(window, key_callback);
- 
-    glfwMakeContextCurrent(window);
-    gladLoadGL();
-    glfwSwapInterval(1);
-
-    vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertex_shader, 1, &vertex_shader_text, NULL);
-    glCompileShader(vertex_shader);
- 
-    fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragment_shader, 1, &fragment_shader_text, NULL);
-    glCompileShader(fragment_shader);
- 
-    program = glCreateProgram();
-    glAttachShader(program, vertex_shader);
-    glAttachShader(program, fragment_shader);
-    glLinkProgram(program);
- 
-
-
-    /// HOOPS STUFF
-
-    A3DBool loaded = A3DSDKLoadLibraryA(HE_BINARY_DIRECTORY);
-    assert(loaded);
-
-    A3DStatus result = A3DLicPutUnifiedLicense(HOOPS_LICENSE);
-    assert(result == A3D_SUCCESS);
-
-    result = A3DDllInitialize(A3D_DLL_MAJORVERSION, A3D_DLL_MINORVERSION);
-    assert(result == A3D_SUCCESS);
-
-    A3DAsmModelFile* model_file = load_model_file(HE_DATA_DIRECTORY INPUT_FILE);
-    assert(model_file != 0);
-
-
-    GLScene gl_scene;
-    p_location = glGetUniformLocation(program, "P");
-    v_location = glGetUniformLocation(program, "V");
-    m_location = glGetUniformLocation(program, "M");
-    gl_scene.shader_location_coord = glGetAttribLocation(program, "vPos");
-    gl_scene.shader_location_normal = glGetAttribLocation(program, "vNorm");
-
-    traverse_model_file(model_file, &gl_scene);
-    printf("Scene built: %d objects / %d OpenGL objects\n", gl_scene.scene_objects.size(), gl_scene.gl_objects.size());
- 
-    // NOTE: OpenGL error checks have been omitted for brevity
-     glEnable(GL_DEPTH_TEST); // Enable depth testing
-    glEnable(GL_CULL_FACE);  // Enable face culling
-    glCullFace(GL_BACK);     // Cull backfaces
     while (!glfwWindowShouldClose(window))
     {
-        float ratio;
         int width, height;
-        mat4x4 m, p, vp, v;
+        mat4x4 m, v, p;
  
         glfwGetFramebufferSize(window, &width, &height);
-        ratio = width / (float) height;
- 
         glViewport(0, 0, width, height);
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
  
- 
-        /* mat4x4_identity(m); */
-        /* mat4x4_rotate_Y(m, m, (float) glfwGetTime()); */
-        /* mat4x4_translate(m, 0.0, 0.0, (float)glfwGetTime()); */
+        mat4x4_ortho(p, -150.f, 150.f, -150.f, 150.f, -1000, 1000.0);
 
         mat4x4_identity(v);
         float radius = 150.f;
-        float angle = glfwGetTime();
-        vec3 eye = {cos(angle) * radius, cos(angle / 100.0) * radius, sin(angle) * radius};
-        vec3 center = {0.0, 0.0, 0.0};
-        vec3 up = {0.0, 1.0, 0.0};
+        float angle  = glfwGetTime();
+        vec3 eye     = {cosf(angle) * radius, cosf(angle / 100.0) * radius, sinf(angle) * radius};
+        vec3 center  = {0.0, 0.0, 0.0};
+        vec3 up      = {0.0, 1.0, 0.0};
         mat4x4_look_at(v, eye, center, up);
 
-        mat4x4_ortho(p, -150.f, 150.f, -150.f, 150.f, -1000, 1000.0);
- 
         glUseProgram(program);
 
-        for(const SceneObject& scene_object : gl_scene.scene_objects) {
-            const auto gl_object = gl_scene.gl_objects.find(scene_object.hnd_ri);
+        for(const SceneObject* object = object_start ; object <= object_start + n_objects ; ++object) {
             glUniformMatrix4fv(p_location, 1, GL_FALSE, (const GLfloat*) p);
             glUniformMatrix4fv(v_location, 1, GL_FALSE, (const GLfloat*) v);
-            glUniformMatrix4fv(m_location, 1, GL_FALSE, (const GLfloat*) scene_object.mat_transform_model);
+            glUniformMatrix4fv(m_location, 1, GL_FALSE, (const GLfloat*) object->mat_transform_model);
 
-            glBindVertexArray(gl_object->second.gl_vao);
-            glDrawElements(GL_TRIANGLES, gl_object->second.gl_indices_count, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(object->gl_vao);
+            glDrawElements(GL_TRIANGLES, object->gl_indices_count, GL_UNSIGNED_INT, 0);
         }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
- 
-    glDeleteVertexArrays(gl_scene.gl_vaos.size(), gl_scene.gl_vaos.data());
-    glDeleteBuffers(gl_scene.gl_vaos.size(), gl_scene.gl_vaos.data());
+}
 
-    glfwDestroyWindow(window);
- 
-    glfwTerminate();
+int main(int argc, char* argv[])
+{
+    GLFWwindow* window  = glfw_prepare();
+    GLuint      program = gl_prepare_program();
 
+    A3DSDKLoadLibraryA(HE_BINARY_DIRECTORY);
+    A3DLicPutUnifiedLicense(HOOPS_LICENSE);
+    A3DDllInitialize(A3D_DLL_MAJORVERSION, A3D_DLL_MINORVERSION);
 
+    A3DAsmModelFile* model_file = load_model_file(HE_DATA_DIRECTORY INPUT_FILE);
+
+    TraverseData     data_traverse;
+    traverse_model_file(model_file, &data_traverse);
+
+    A3DAsmModelFileDelete(model_file);
     A3DDllTerminate();
-
-    // Unload the library
     A3DSDKUnloadLibrary();
+ 
+    printf("Starting Loop\n");
+    glfw_loop(window, program, data_traverse.objects.data(), data_traverse.objects.size());
+ 
+    // Clean up all resources
+    glDeleteProgram(program);
+    glDeleteVertexArrays(data_traverse.gl_vaos.size(), data_traverse.gl_vaos.data());
+    glDeleteBuffers(data_traverse.gl_vaos.size(), data_traverse.gl_vaos.data());
+    
+    glfwDestroyWindow(window);
+    glfwTerminate();
 
     return EXIT_SUCCESS;
 }
-
