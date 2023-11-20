@@ -66,11 +66,9 @@ typedef struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Exchange API Functions
-////////////////////////////////////////////////////////////////////////////////
-
 /// TODO Ideally the Usability Phase 2 reduces this all to 1 function and prunes
 /// the entire sample about 200 lines of code! 
-
+////////////////////////////////////////////////////////////////////////////////
 // Traversal functions, one per entity type.
 void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
 void he_traverse_product_occurrence( A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
@@ -88,17 +86,13 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 ////////////////////////////////////////////////////////////////////////////////
 /// Exchange <-> Graphics
 ////////////////////////////////////////////////////////////////////////////////
-
-// Send the data in `data_mesh` to the GPU, reading to be drawn.
+// Send the data in `mesh_data` to the GPU, reading to be drawn.
 // GPU data is storedd in `data_traverse` and is used later on by `glfw_loop()`
-std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, TraverseData* const data_traverse);
+std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Window/Graphics API Functions
 ////////////////////////////////////////////////////////////////////////////////
-
-
-// Other window/GPU-related functions.
 void glfw_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects);
 GLuint gl_prepare_program();
 GLFWwindow* glfw_prepare();
@@ -151,6 +145,12 @@ int main(int argc, char* argv[])
 
     return EXIT_SUCCESS;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////      FUNCTION DEFINITIONS      //////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Model File Traversal
@@ -273,24 +273,27 @@ void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DM
 
         A3DRiSetGet(0, &data_ri_set);
     } else {
-        A3DMeshData data_mesh;
-        A3D_INITIALIZE_DATA(A3DMeshData, data_mesh);
-        A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &data_mesh);
+        A3DMeshData mesh_data;
+        A3D_INITIALIZE_DATA(A3DMeshData, mesh_data);
+        A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data);
         if (code != A3D_SUCCESS)
         {
             A3DRWParamsTessellationData data_params_tess;
             A3D_INITIALIZE_DATA(A3DRWParamsTessellationData, data_params_tess);
             data_params_tess.m_eTessellationLevelOfDetail = kA3DTessLODMedium;
             A3DRiRepresentationItemComputeTessellation(hnd_ri, &data_params_tess);
-            A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &data_mesh);
+            A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data);
         }
         assert(code == A3D_SUCCESS);
 
         auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
         if(gl_iterator == data_traverse->ri_to_gl.end()) {
-            auto pair = he_mesh_data_to_opengl(&data_mesh, data_traverse);
+            auto pair = he_mesh_data_to_opengl(&mesh_data, data_traverse);
             gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
+
+        // Release mesh data memory
+        A3DRiComputeMesh(0, 0, &mesh_data);
 
         SceneObject object;
         mat4x4_dup(object.mat_transform_model, mat_transform_world);
@@ -411,12 +414,12 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Pivot function that sends a mesh represented by `data_mesh` into the GPU.
+/// Pivot function that sends a mesh represented by `mesh_data` into the GPU.
 /// The Graphics API uses OpenGL buffer.
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
 /// The identifiers are used later on for drawing by `glfw_loop()`.
-std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, TraverseData* const data_traverse)
+std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse)
 {
     // TODO About the 40 first lines (until gl.. calls) of this function are
     // removed thanks to Usability Phase 1 feedback.
@@ -429,21 +432,21 @@ std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, 
     // Count the total number of indices
     // The buffer objects will have at max n_indices indices
     size_t n_indices = 0;
-    for(A3DUns32 face_i = 0 ; face_i < data_mesh->m_uiFaceSize ; ++face_i) {
-        n_indices += 3 * data_mesh->m_puiTriangleCountPerFace[face_i];
+    for(A3DUns32 face_i = 0 ; face_i < mesh_data->m_uiFaceSize ; ++face_i) {
+        n_indices += 3 * mesh_data->m_puiTriangleCountPerFace[face_i];
     }
 
     // This map will serve as cache for the OpenGL indices
     // vertex_index|normal_index -> gl_index
     std::unordered_map<uint64_t, GLuint> index_cache;
 
-    for (A3DUns32 face_i = 0; face_i < data_mesh->m_uiFaceSize; ++face_i) {
-        A3DUns32 n_triangles = data_mesh->m_puiTriangleCountPerFace[face_i];
+    for (A3DUns32 face_i = 0; face_i < mesh_data->m_uiFaceSize; ++face_i) {
+        A3DUns32 n_triangles = mesh_data->m_puiTriangleCountPerFace[face_i];
         if (n_triangles == 0) {
             continue;
         }
-        const A3DUns32* ptr_coord_index = data_mesh->m_ppuiPointIndicesPerFace[face_i];
-        const A3DUns32* ptr_normal_index = data_mesh->m_ppuiNormalIndicesPerFace[face_i];
+        const A3DUns32* ptr_coord_index = mesh_data->m_ppuiPointIndicesPerFace[face_i];
+        const A3DUns32* ptr_normal_index = mesh_data->m_ppuiNormalIndicesPerFace[face_i];
 
         for (size_t vertex_i = 0 ; vertex_i < n_triangles * 3 ; ++vertex_i) {
             A3DUns32 coord_index = *ptr_coord_index++;
@@ -454,18 +457,18 @@ std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, 
 
             GLuint vertex_index = insertion.first->second;
             if(insertion.second) {
-                auto x = data_mesh->m_pdCoords[coord_index];
-                auto y = data_mesh->m_pdCoords[coord_index+1];
-                auto z = data_mesh->m_pdCoords[coord_index+2];
+                auto x = mesh_data->m_pdCoords[coord_index];
+                auto y = mesh_data->m_pdCoords[coord_index+1];
+                auto z = mesh_data->m_pdCoords[coord_index+2];
 
                 // Create the coordinates
                 vertex_buffer.insert(vertex_buffer.end(), {
-                    data_mesh->m_pdCoords[coord_index],
-                    data_mesh->m_pdCoords[coord_index + 1],
-                    data_mesh->m_pdCoords[coord_index + 2],
-                    data_mesh->m_pdNormals[normal_index],
-                    data_mesh->m_pdNormals[normal_index + 1],
-                    data_mesh->m_pdNormals[normal_index + 2]
+                    mesh_data->m_pdCoords[coord_index],
+                    mesh_data->m_pdCoords[coord_index + 1],
+                    mesh_data->m_pdCoords[coord_index + 2],
+                    mesh_data->m_pdNormals[normal_index],
+                    mesh_data->m_pdNormals[normal_index + 1],
+                    mesh_data->m_pdNormals[normal_index + 2]
                 });
             }
             index_buffer.push_back(vertex_index);
