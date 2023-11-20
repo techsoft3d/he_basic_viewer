@@ -12,7 +12,7 @@
 /// * docs.techsoft3d.com/exchange/latest/tutorials/basic_viewing.html       ///
 ////////////////////////////////////////////////////////////////////////////////
 /// TODO list week 11-20-2023:
-/// - Prune down gl_make_buffers code using Usability Phase 1 Feedback
+/// - Prune down he_mesh_data_to_opengl code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
 ////////////////////////////////////////////////////////////////////////////////
 #include <cassert>
@@ -43,7 +43,7 @@
 /// Data structures
 
 // Represents a drawable object in the GPU.
-// Created from an `A3DMeshData` instance during `gl_make_buffers()`.
+// Created from an `A3DMeshData` instance during `he_mesh_data_to_opengl()`.
 typedef struct {
     mat4x4  mat_transform_model;  // Transformation matrix for the object.
     GLuint  gl_vao;               // OpenGL Vertex Array Object ID.
@@ -70,26 +70,31 @@ typedef struct {
 /// the entire sample about 200 lines of code! 
 
 // Traversal functions, one per entity type.
-void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
-void traverse_product_occurrence( A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
-void traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
-void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
+void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
+void he_traverse_product_occurrence( A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
+void he_traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
+void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
 
 // Recursively retrieve the part definition and transformation underlying a Product Occurrence
-A3DAsmPartDefinition* get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po);
-A3DMiscTransformation* get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po);
+A3DAsmPartDefinition*  he_get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po);
+A3DMiscTransformation* he_get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po);
 
 // Converts an A3DMiscTransformation to a linmath 4x4 transformation matrix
 // ready to be used in the graphics API
-void mat4x4_from_transformation(const A3DMiscTransformation* hnd_transformation, mat4x4 mat_result);
+void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation, mat4x4 mat_result);
+
+////////////////////////////////////////////////////////////////////////////////
+/// Exchange <-> Graphics
+////////////////////////////////////////////////////////////////////////////////
+
+// Send the data in `data_mesh` to the GPU, reading to be drawn.
+// GPU data is storedd in `data_traverse` and is used later on by `glfw_loop()`
+std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, TraverseData* const data_traverse);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Window/Graphics API Functions
 ////////////////////////////////////////////////////////////////////////////////
 
-// Send the data in `data_mesh` to the GPU, reading to be drawn.
-// GPU data is storedd in `data_traverse` and is used later on by `glfw_loop()`
-std::pair<GLuint, GLsizei> gl_make_buffers(A3DMeshData* const data_mesh, TraverseData* const data_traverse);
 
 // Other window/GPU-related functions.
 void glfw_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects);
@@ -121,7 +126,7 @@ int main(int argc, char* argv[])
     ////////////////////////////////////////////////////////
     // CALL THE TRAVERSE FUNCTIONS ON THE LOADED MODEL FILE.
     TraverseData     data_traverse;
-    traverse_model_file(model_file, &data_traverse);
+    he_traverse_model_file(model_file, &data_traverse);
 
     /////////////////////////////////////////////////////////
     // Everything is loaded to GPU, Exchange can be released.
@@ -155,7 +160,7 @@ int main(int argc, char* argv[])
 /// product occurrence entities.
 /// The cascaded attributes and transform information are initialized and send
 /// to the next traversal functions.
-void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse)
+void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse)
 {
     A3DMiscCascadedAttributes* hnd_attrs_modelfile = 0;
     A3DMiscCascadedAttributesCreate(&hnd_attrs_modelfile);
@@ -169,7 +174,7 @@ void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* con
     mat4x4_identity(mat_transform);
 
     for (A3DUns32 po_i = 0 ; po_i < data_modelfile.m_uiPOccurrencesSize ; ++po_i) {
-        traverse_product_occurrence(data_modelfile.m_ppPOccurrences[po_i], hnd_attrs_modelfile, mat_transform, data_traverse);
+        he_traverse_product_occurrence(data_modelfile.m_ppPOccurrences[po_i], hnd_attrs_modelfile, mat_transform, data_traverse);
     }
     
     A3DAsmModelFileGet(0, &data_modelfile);
@@ -182,7 +187,7 @@ void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* con
 /// either other product occurrences or part definition entities.
 /// Cascaded attributes and transform data are computed and accumulated for the
 /// next traverse calls.
-void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
+void he_traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
     A3DMiscCascadedAttributes* hnd_attrs_po = 0;
     A3DMiscCascadedAttributesCreate(&hnd_attrs_po);
@@ -194,16 +199,16 @@ void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscC
     A3DStatus code = A3DAsmProductOccurrenceGet(hnd_po, &data_po);
     assert(code == A3D_SUCCESS);
 
-    A3DMiscTransformation* hnd_po_transformation = get_product_occurrence_transformation(hnd_po);
+    A3DMiscTransformation* hnd_po_transformation = he_get_product_occurrence_transformation(hnd_po);
     mat4x4 mat_transform_po_local, mat_transform_po_world;
-    mat4x4_from_transformation(hnd_po_transformation, mat_transform_po_local);
+    he_transformation_to_mat4x4(hnd_po_transformation, mat_transform_po_local);
     mat4x4_mul(mat_transform_po_world, mat_transform_world, mat_transform_po_local);
 
-    A3DAsmPartDefinition* hnd_part = get_product_occurrence_part_definition(hnd_po);
-    traverse_part_definition(hnd_part, hnd_attrs_po, mat_transform_po_world, data_traverse);
+    A3DAsmPartDefinition* hnd_part = he_get_product_occurrence_part_definition(hnd_po);
+    he_traverse_part_definition(hnd_part, hnd_attrs_po, mat_transform_po_world, data_traverse);
 
     for (A3DUns32 po_i = 0 ; po_i < data_po.m_uiPOccurrencesSize ; ++po_i) {
-        traverse_product_occurrence(data_po.m_ppPOccurrences[po_i], hnd_attrs_po, mat_transform_po_world, data_traverse);
+        he_traverse_product_occurrence(data_po.m_ppPOccurrences[po_i], hnd_attrs_po, mat_transform_po_world, data_traverse);
     }
 
     A3DAsmProductOccurrenceGet(0, &data_po);
@@ -214,7 +219,7 @@ void traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscC
 /// Traverse a part definition and visits the underlying representation item
 /// Cascaded attributes and transform data are computed and accumulated for the
 /// next traverse calls.
-void traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
+void he_traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
     if(hnd_part == 0) {
         return;
@@ -230,7 +235,7 @@ void traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCasca
     assert(code == A3D_SUCCESS);
 
     for (A3DUns32 ri_i = 0 ; ri_i < data_part.m_uiRepItemsSize ; ++ri_i) {
-        traverse_representation_item(data_part.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
+        he_traverse_representation_item(data_part.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
     }
 
     A3DAsmPartDefinitionGet(0, &data_part);
@@ -242,14 +247,14 @@ void traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCasca
 /// Traverse a representation item entity.
 /// The main operation of this function is to call `A3DRiComputeMesh()` to
 /// generate an `A3DMeshData` instance before sending the latter to the GPU
-/// using `gl_make_buffers()`.
+/// using `he_mesh_data_to_opengl()`.
 /// The transform and cascaded attributes information accumulated along the tree
 /// traversal are used in this step.
 ///
 /// If the input representation item is an aggregate of several, the entity is
-/// first unfolded and `traverse_representation_item()` is recursively called
+/// first unfolded and `he_traverse_representation_item()` is recursively called
 /// for each of them.
-void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
+void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
 {
     A3DEEntityType ri_type = kA3DTypeUnknown;
     A3DEntityGetType(hnd_ri, &ri_type);
@@ -261,7 +266,7 @@ void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMisc
         assert(code == A3D_SUCCESS);
 
         for(A3DUns32 ri_i = 0 ; ri_i < data_ri_set.m_uiRepItemsSize ; ++ri_i) {
-            traverse_representation_item(data_ri_set.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
+            he_traverse_representation_item(data_ri_set.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
         }
 
         A3DRiSetGet(0, &data_ri_set);
@@ -281,7 +286,7 @@ void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMisc
 
         auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
         if(gl_iterator == data_traverse->ri_to_gl.end()) {
-            auto pair = gl_make_buffers(&data_mesh, data_traverse);
+            auto pair = he_mesh_data_to_opengl(&data_mesh, data_traverse);
             gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
 
@@ -300,8 +305,8 @@ void traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMisc
 /// accessed. Instead, it can be part of a prototype reference, or an external data.
 /// This function provides a one-call function that returns the correct part
 /// definition of a product occurrence, if available.
-/// The function is used in `traverse_product_occurrence()`
-A3DAsmPartDefinition* get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po)
+/// The function is used in `he_traverse_product_occurrence()`
+A3DAsmPartDefinition* he_get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po)
 {
     if(hnd_po == 0) {
         return 0;
@@ -315,7 +320,7 @@ A3DAsmPartDefinition* get_product_occurrence_part_definition(A3DAsmProductOccurr
     A3DMiscTransformation* hnd_part = data_po.m_pPart;
     if (hnd_part == 0) {
         A3DAsmProductOccurrence* hnd_po_reference = data_po.m_pPrototype ? data_po.m_pPrototype : data_po.m_pExternalData;
-        hnd_part = get_product_occurrence_part_definition(hnd_po_reference);
+        hnd_part = he_get_product_occurrence_part_definition(hnd_po_reference);
     }
 
     A3DAsmProductOccurrenceGet(0, &data_po);
@@ -327,8 +332,8 @@ A3DAsmPartDefinition* get_product_occurrence_part_definition(A3DAsmProductOccurr
 /// accessed. Instead, it can be part of a prototype reference, or an external data.
 /// This function provides a one-call function that returns the correct
 /// transformation of a product occurrence, if available.
-/// The function is used in `traverse_product_occurrence()`
-A3DMiscTransformation* get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po)
+/// The function is used in `he_traverse_product_occurrence()`
+A3DMiscTransformation* he_get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po)
 {
     if(hnd_po == 0) {
         return 0;
@@ -342,7 +347,7 @@ A3DMiscTransformation* get_product_occurrence_transformation(A3DAsmProductOccurr
     A3DMiscTransformation* hnd_po_transformation = data_po.m_pLocation;
     if (hnd_po_transformation == 0) {
         A3DAsmProductOccurrence* hnd_po_reference = data_po.m_pPrototype ? data_po.m_pPrototype : data_po.m_pExternalData;
-        hnd_po_transformation = get_product_occurrence_transformation(hnd_po_reference);
+        hnd_po_transformation = he_get_product_occurrence_transformation(hnd_po_reference);
     }
 
     A3DAsmProductOccurrenceGet(0, &data_po);
@@ -353,7 +358,7 @@ A3DMiscTransformation* get_product_occurrence_transformation(A3DAsmProductOccurr
 /// This utility function computes a column-major 4x4 transformation matrix out
 /// of an `A3DMiscTransformation` entity. 
 /// The result is ready to be send to our graphics API.
-void mat4x4_from_transformation(const A3DMiscTransformation* hnd_transformation, mat4x4 mat_result)
+void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation, mat4x4 mat_result)
 {
     if (hnd_transformation == 0) {
         mat4x4_identity(mat_result);
@@ -409,7 +414,7 @@ void mat4x4_from_transformation(const A3DMiscTransformation* hnd_transformation,
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
 /// The identifiers are used later on for drawing by `glfw_loop()`.
-std::pair<GLuint, GLsizei> gl_make_buffers(A3DMeshData* const data_mesh, TraverseData* const data_traverse)
+std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const data_mesh, TraverseData* const data_traverse)
 {
     // TODO About the 40 first lines (until gl.. calls) of this function are
     // removed thanks to Usability Phase 1 feedback.
@@ -502,7 +507,7 @@ std::pair<GLuint, GLsizei> gl_make_buffers(A3DMeshData* const data_mesh, Travers
 ////////////////////////////////////////////////////////////////////////////////
 /// Drawing loop.
 /// The functions indefinitely calls the graphics API drawing calls to display
-/// all the objects generated by `gl_make_buffers()`.
+/// all the objects generated by `he_mesh_data_to_opengl()`.
 /// A simple rotation computation is called to animate the display.
 void glfw_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects)
 {
