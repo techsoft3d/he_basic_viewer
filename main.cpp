@@ -1,3 +1,20 @@
+////////////////////////////////////////////////////////////////////////////////
+/// Basic Mesh Viewer                                                        ///
+/// #################                                                        ///
+///                                                                          ///
+/// This sample provides a single source CAD viewer using HOOPS Exchange.    ///
+/// The codes makes use of the traversal API and `A3DMeshData` to send mesh  ///
+/// data to OpenGL Graphics API                                              ///
+///                                                                          ///
+/// For more information see:                                                ///
+///                                                                          ///
+/// * docs.techsoft3d.com/exchange/latest/tutorials/mesh-viewer-sample.html  ///
+/// * docs.techsoft3d.com/exchange/latest/tutorials/basic_viewing.html       ///
+////////////////////////////////////////////////////////////////////////////////
+/// TODO list week 11-20-2023:
+/// - Prune down gl_make_buffers code using Usability Phase 1 Feedback
+/// - Prune down traversal code using Usability Phase 2
+////////////////////////////////////////////////////////////////////////////////
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +33,10 @@
 #define INITIALIZE_A3D_API
 #include <A3DSDKIncludes.h>
 
+////////////////////////////////////////////////////////////////////////////////
+/// INPUT_FILE
+/// Default CAD input file, relative to Exchange sample data folder.
+/// To see how the value is used, check the `main()` function.
 #define INPUT_FILE "/prc/_micro engine.prc"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -45,6 +66,9 @@ typedef struct {
 /// Exchange API Functions
 ////////////////////////////////////////////////////////////////////////////////
 
+/// TODO Ideally the Usability Phase 2 reduces this all to 1 function and prunes
+/// the entire sample about 200 lines of code! 
+
 // Traversal functions, one per entity type.
 void traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
 void traverse_product_occurrence( A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
@@ -73,10 +97,6 @@ GLuint gl_prepare_program();
 GLFWwindow* glfw_prepare();
 void glfw_error_callback(int error, const char* description);
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
-
-
-
-
 
 ////////////////////////////////////////////////////////////////////////////////
 /// MAIN FUNCTION
@@ -391,6 +411,9 @@ void mat4x4_from_transformation(const A3DMiscTransformation* hnd_transformation,
 /// The identifiers are used later on for drawing by `glfw_loop()`.
 std::pair<GLuint, GLsizei> gl_make_buffers(A3DMeshData* const data_mesh, TraverseData* const data_traverse)
 {
+    // TODO About the 40 first lines (until gl.. calls) of this function are
+    // removed thanks to Usability Phase 1 feedback.
+
     GLuint gl_shader_coord_location =  0;
     GLuint gl_shader_normal_location = 1;
     std::vector<GLuint> index_buffer;
