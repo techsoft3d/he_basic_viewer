@@ -14,6 +14,8 @@
 /// TODO list week 11-20-2023:
 /// - Prune down he_mesh_data_to_opengl code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
+/// Expected results: about 250 lines of code removal. Less algorithm, less HE
+/// calls.
 ////////////////////////////////////////////////////////////////////////////////
 #include <cassert>
 #include <cmath>
