@@ -14,6 +14,8 @@
 /// TODO list week 11-20-2023:
 /// - Prune down he_mesh_data_to_opengl code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
+/// - Use separate file for non-HE code
+/// - Subdir the deps
 /// Expected results: about 250 lines of code removal. Less algorithm, less HE
 /// calls.
 ////////////////////////////////////////////////////////////////////////////////
@@ -419,6 +421,8 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
 /// The identifiers are used later on for drawing by `glfw_loop()`.
+/// TODO: Split this function to extract A3DMeshData content into std containers which are sent to he_mesh_data_to_opengl.
+/// + Maybe rename this function.
 std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse)
 {
     // TODO About the 40 first lines (until gl.. calls) of this function are
