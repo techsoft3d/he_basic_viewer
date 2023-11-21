@@ -5,7 +5,7 @@ project(MeshViewer)
 set(GLFW_BUILD_EXAMPLES OFF)
 set(GLFW_BUILD_TESTS OFF)
 set(GLFW_BUILD_DOCS OFF)
-add_subdirectory(glfw-3.3.8)
+add_subdirectory(externals/glfw-3.3.8)
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -23,10 +23,10 @@ else()
     endif()
 endif()
 
-add_executable(MeshViewer main.cpp glad.c)
+add_executable(MeshViewer main.cpp externals/glad.c)
 target_include_directories(MeshViewer PRIVATE 
     "${EXCHANGE_PACKAGE_PATH}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/externals"
 )
 target_compile_definitions(MeshViewer PRIVATE 
     HE_BINARY_DIRECTORY="${HE_BINARY_DIRECTORY}"

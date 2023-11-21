@@ -15,7 +15,6 @@
 /// - Prune down he_mesh_data_to_opengl code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
 /// - Use separate file for non-HE code
-/// - Subdir the deps
 /// Expected results: about 250 lines of code removal. Less algorithm, less HE
 /// calls.
 ////////////////////////////////////////////////////////////////////////////////
