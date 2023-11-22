@@ -11,6 +11,7 @@
 
 #include <A3DSDKIncludes.h>
 
+////////////////////////////////////////////////////////////////////////////////
 // Represents a drawable object in the GPU.
 // Created from an `A3DMeshData` instance during `he_mesh_data_to_opengl()`.
 struct SceneObject {
@@ -19,6 +20,7 @@ struct SceneObject {
     GLsizei gl_indices_count;     // Number of indices in the buffer.
 };
 
+////////////////////////////////////////////////////////////////////////////////
 // Holds information about all objects and resources for drawing.
 // Uses an associative array to link each representation item to its drawable object.
 struct TraverseData {
