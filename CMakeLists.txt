@@ -23,7 +23,7 @@ else()
     endif()
 endif()
 
-add_executable(MeshViewer main.cpp externals/glad.c)
+add_executable(MeshViewer main.cpp rendering.cpp externals/glad.c)
 target_include_directories(MeshViewer PRIVATE 
     "${EXCHANGE_PACKAGE_PATH}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/externals"
