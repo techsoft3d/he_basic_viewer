@@ -12,9 +12,8 @@
 /// * docs.techsoft3d.com/exchange/latest/tutorials/basic_viewing.html       ///
 ////////////////////////////////////////////////////////////////////////////////
 /// TODO list week 11-20-2023:
-/// - Prune down he_mesh_data_to_opengl code using Usability Phase 1 Feedback
+/// - Prune down he_mesh_data_to_rendering code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
-/// - Use separate file for non-HE code
 /// Expected results: about 250 lines of code removal. Less algorithm, less HE
 /// calls.
 ////////////////////////////////////////////////////////////////////////////////
@@ -31,10 +30,6 @@
 /// To see how the value is used, check the `main()` function.
 #define INPUT_FILE "/prc/_micro engine.prc"
 
-////////////////////////////////////////////////////////////////////////////////
-/// Exchange API Functions
-/// TODO Ideally the Usability Phase 2 reduces this all to 1 function and prunes
-/// the entire sample about 200 lines of code! 
 ////////////////////////////////////////////////////////////////////////////////
 // Traversal functions, one per entity type.
 void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
@@ -53,10 +48,9 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 ////////////////////////////////////////////////////////////////////////////////
 /// Exchange <-> Graphics
 ////////////////////////////////////////////////////////////////////////////////
-// Send the data in `mesh_data` to the GPU, reading to be drawn.
-// GPU data is storedd in `data_traverse` and is used later on by `rendering_loop()`
-std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse);
-
+// Send the data in `mesh_data` to the rendering API, ready to be drawn.
+// GPU data is stored in `data_traverse` and is used later on by `rendering_loop()`
+std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data, TraverseData* const data_traverse);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// MAIN FUNCTION
@@ -103,13 +97,7 @@ int main(int argc, char* argv[])
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 //////////////////////      FUNCTION DEFINITIONS      //////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////////////////////////
-/// Model File Traversal
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,7 +193,7 @@ void he_traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCa
 /// Traverse a representation item entity.
 /// The main operation of this function is to call `A3DRiComputeMesh()` to
 /// generate an `A3DMeshData` instance before sending the latter to the GPU
-/// using `he_mesh_data_to_opengl()`.
+/// using `he_mesh_data_to_rendering()`.
 /// The transform and cascaded attributes information accumulated along the tree
 /// traversal are used in this step.
 ///
@@ -244,7 +232,7 @@ void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DM
 
         auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
         if(gl_iterator == data_traverse->ri_to_gl.end()) {
-            auto pair = he_mesh_data_to_opengl(&mesh_data, data_traverse);
+            auto pair = he_mesh_data_to_rendering(&mesh_data, data_traverse);
             gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
 
@@ -259,7 +247,6 @@ void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DM
 
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 /// The underlying part definition a product occurence entity may not be directly
@@ -369,21 +356,19 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 /// Exchange <-> Graphics
 ////////////////////////////////////////////////////////////////////////////////
 
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Pivot function that sends a mesh represented by `mesh_data` into the GPU.
 /// The Graphics API uses OpenGL buffer.
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
 /// The identifiers are used later on for drawing by `rendering_loop()`.
-/// TODO: Split this function to extract A3DMeshData content into std containers which are sent to he_mesh_data_to_opengl.
 /// + Maybe rename this function.
-std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse)
+std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data, TraverseData* const data_traverse)
 {
     // TODO About the 40 first lines (until gl.. calls) of this function are
     // removed thanks to Usability Phase 1 feedback.
 
-    GLuint gl_shader_coord_location =  0;
-    GLuint gl_shader_normal_location = 1;
     std::vector<GLuint> index_buffer;
     std::vector<GLdouble> vertex_buffer;
 
@@ -433,34 +418,14 @@ std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, 
         }
     }
 
-    GLuint gl_vao = 0;
-    glGenVertexArrays(1, &gl_vao);
-    glBindVertexArray(gl_vao);
+    std::tuple<GLuint, GLuint, GLuint> gl_ids = rendering_to_gpu(index_buffer, vertex_buffer);
 
-    GLuint gl_bo_vertex = 0;
-    glGenBuffers(1, &gl_bo_vertex);
-    glBindBuffer(GL_ARRAY_BUFFER, gl_bo_vertex);
-    glBufferData(GL_ARRAY_BUFFER, vertex_buffer.size() * sizeof(GLdouble), vertex_buffer.data(), GL_STATIC_DRAW);
+    // Store identifiers for later cleanup
+    data_traverse->gl_vaos.push_back(std::get<0>(gl_ids));
+    data_traverse->gl_vbos.push_back(std::get<1>(gl_ids));
+    data_traverse->gl_vbos.push_back(std::get<2>(gl_ids));
 
-    GLuint gl_bo_index = 0;
-    glGenBuffers(1, &gl_bo_index);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bo_index);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer.size() * sizeof(GLuint), index_buffer.data(), GL_STATIC_DRAW);
-
-    glEnableVertexAttribArray(gl_shader_coord_location);
-    glVertexAttribPointer(gl_shader_coord_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) 0);
-    glEnableVertexAttribArray(gl_shader_normal_location);
-    glVertexAttribPointer(gl_shader_normal_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) (3 * sizeof(GLdouble)));
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    data_traverse->gl_vaos.push_back(gl_vao);
-    data_traverse->gl_vbos.push_back(gl_bo_vertex);
-    data_traverse->gl_vbos.push_back(gl_bo_index);
-
-    return {gl_vao, (GLsizei)index_buffer.size()};
+    return {std::get<0>(gl_ids), (GLsizei)index_buffer.size()};
 }
 
 
