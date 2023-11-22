@@ -54,7 +54,7 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 /// Exchange <-> Graphics
 ////////////////////////////////////////////////////////////////////////////////
 // Send the data in `mesh_data` to the GPU, reading to be drawn.
-// GPU data is storedd in `data_traverse` and is used later on by `glfw_loop()`
+// GPU data is storedd in `data_traverse` and is used later on by `rendering_loop()`
 std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse);
 
 
@@ -65,8 +65,8 @@ int main(int argc, char* argv[])
 {
     ///////////////////////////////////////////
     // Initialize window and graphics resources
-    GLFWwindow* window  = glfw_prepare();
-    GLuint      program = gl_prepare_program();
+    GLFWwindow* window  = rendering_prepare();
+    GLuint      program = rendering_prepare_program();
 
     /////////////////////////////////////////////////////
     // INITIALIZE HOOPS EXCHANGE AND LOAD THE MODEL FILE.
@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
     ///////////////////////////
     // Draw the scene on-screen
     printf("Starting Loop\n");
-    glfw_loop(window, program, data_traverse.objects.data(), data_traverse.objects.size());
+    rendering_loop(window, program, data_traverse.objects.data(), data_traverse.objects.size());
  
     /////////////////////////////////////////////
     // Clean up all window and graphics resources
@@ -377,7 +377,7 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 /// The Graphics API uses OpenGL buffer.
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
-/// The identifiers are used later on for drawing by `glfw_loop()`.
+/// The identifiers are used later on for drawing by `rendering_loop()`.
 /// TODO: Split this function to extract A3DMeshData content into std containers which are sent to he_mesh_data_to_opengl.
 /// + Maybe rename this function.
 std::pair<GLuint, GLsizei> he_mesh_data_to_opengl(A3DMeshData* const mesh_data, TraverseData* const data_traverse)

@@ -34,8 +34,8 @@ struct TraverseData {
 ////////////////////////////////////////////////////////////////////////////////
 /// Window/Graphics API Functions
 ////////////////////////////////////////////////////////////////////////////////
-void glfw_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects);
-GLuint gl_prepare_program();
-GLFWwindow* glfw_prepare();
-void glfw_error_callback(int error, const char* description);
-void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
+void        rendering_loop(GLFWwindow* window, GLuint program, const SceneObject* object_start, size_t n_objects);
+GLuint      rendering_prepare_program();
+GLFWwindow* rendering_prepare();
+void        rendering_error_callback(int error, const char* description);
+void        rendering_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
