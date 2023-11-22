@@ -51,7 +51,7 @@ void rendering_loop(GLFWwindow* window, GLuint program, const SceneObject* objec
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Initialized the window using GLFW
-GLFWwindow* rendering_prepare()
+GLFWwindow* rendering_prepare_window()
 {
     glfwSetErrorCallback(rendering_error_callback);
  
@@ -91,7 +91,7 @@ void rendering_key_callback(GLFWwindow* window, int key, int scancode, int actio
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Initializes OpenGL Shader program
-GLuint rendering_prepare_program()
+GLuint rendering_prepare()
 {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -146,5 +146,20 @@ GLuint rendering_prepare_program()
     return program;
 }
  
+////////////////////////////////////////////////////////////////////////////////
+/// Cleans up all GLFW resources
+void rendering_cleanup(GLuint program, TraverseData* data_traverse)
+{
+    glDeleteProgram(program);
+    glDeleteVertexArrays(data_traverse->gl_vaos.size(), data_traverse->gl_vaos.data());
+    glDeleteBuffers(data_traverse->gl_vaos.size(), data_traverse->gl_vaos.data());
+}
 
+////////////////////////////////////////////////////////////////////////////////
+/// Cleans up all OpenGL resources
+void rendering_cleanup_window(GLFWwindow* window)
+{
+    glfwDestroyWindow(window);
+    glfwTerminate();
+}
 

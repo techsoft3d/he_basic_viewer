@@ -65,8 +65,8 @@ int main(int argc, char* argv[])
 {
     ///////////////////////////////////////////
     // Initialize window and graphics resources
-    GLFWwindow* window  = rendering_prepare();
-    GLuint      program = rendering_prepare_program();
+    GLFWwindow* window  = rendering_prepare_window();
+    GLuint      program = rendering_prepare();
 
     /////////////////////////////////////////////////////
     // INITIALIZE HOOPS EXCHANGE AND LOAD THE MODEL FILE.
@@ -96,11 +96,8 @@ int main(int argc, char* argv[])
  
     /////////////////////////////////////////////
     // Clean up all window and graphics resources
-    glDeleteProgram(program);
-    glDeleteVertexArrays(data_traverse.gl_vaos.size(), data_traverse.gl_vaos.data());
-    glDeleteBuffers(data_traverse.gl_vaos.size(), data_traverse.gl_vaos.data());
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    rendering_cleanup(program, &data_traverse);
+    rendering_cleanup_window(window);
 
     return EXIT_SUCCESS;
 }
