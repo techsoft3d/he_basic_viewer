@@ -167,15 +167,15 @@ std::tuple<GLuint, GLuint, GLuint> rendering_to_gpu(const std::vector<GLuint>& i
     glBindBuffer(GL_ARRAY_BUFFER, gl_bo_vertex);
     glBufferData(GL_ARRAY_BUFFER, vertex_buffer.size() * sizeof(GLdouble), vertex_buffer.data(), GL_STATIC_DRAW);
 
-    GLuint gl_bo_index = 0;
-    glGenBuffers(1, &gl_bo_index);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bo_index);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer.size() * sizeof(GLuint), index_buffer.data(), GL_STATIC_DRAW);
-
     glEnableVertexAttribArray(gl_shader_coord_location);
     glVertexAttribPointer(gl_shader_coord_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) 0);
     glEnableVertexAttribArray(gl_shader_normal_location);
     glVertexAttribPointer(gl_shader_normal_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) (3 * sizeof(GLdouble)));
+
+    GLuint gl_bo_index = 0;
+    glGenBuffers(1, &gl_bo_index);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bo_index);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer.size() * sizeof(GLuint), index_buffer.data(), GL_STATIC_DRAW);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
