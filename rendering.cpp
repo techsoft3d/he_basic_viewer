@@ -2,6 +2,10 @@
 
 #include <cstdio>
 
+// For cleanup purpose
+static std::vector<GLuint> gl_vaos;
+static std::vector<GLuint> gl_vbos;
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Drawing loop.
 /// The functions indefinitely calls the graphics API drawing calls to display
@@ -153,7 +157,7 @@ GLuint rendering_prepare()
 /// - Vertex Array Object ID
 /// - Vertex Buffer Object ID
 /// - Index Buffer Object ID
-std::tuple<GLuint, GLuint, GLuint> rendering_to_gpu(const std::vector<GLuint>& index_buffer, const std::vector<GLdouble>& vertex_buffer)
+GLuint rendering_to_gpu(const std::vector<GLuint>& index_buffer, const std::vector<GLdouble>& vertex_buffer, const std::vector<GLdouble>& normal_buffer)
 {
     const GLuint gl_shader_coord_location =  0;
     const GLuint gl_shader_normal_location = 1;
@@ -168,9 +172,15 @@ std::tuple<GLuint, GLuint, GLuint> rendering_to_gpu(const std::vector<GLuint>& i
     glBufferData(GL_ARRAY_BUFFER, vertex_buffer.size() * sizeof(GLdouble), vertex_buffer.data(), GL_STATIC_DRAW);
 
     glEnableVertexAttribArray(gl_shader_coord_location);
-    glVertexAttribPointer(gl_shader_coord_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) 0);
+    glVertexAttribPointer(gl_shader_coord_location, 3, GL_DOUBLE, GL_FALSE, 3 * sizeof(GLdouble), (void*) 0);
+
+    GLuint gl_bo_normal = 0;
+    glGenBuffers(1, &gl_bo_normal);
+    glBindBuffer(GL_ARRAY_BUFFER, gl_bo_normal);
+    glBufferData(GL_ARRAY_BUFFER, normal_buffer.size() * sizeof(GLdouble), normal_buffer.data(), GL_STATIC_DRAW);
+
     glEnableVertexAttribArray(gl_shader_normal_location);
-    glVertexAttribPointer(gl_shader_normal_location, 3, GL_DOUBLE, GL_FALSE, 6 * sizeof(GLdouble), (void*) (3 * sizeof(GLdouble)));
+    glVertexAttribPointer(gl_shader_normal_location, 3, GL_DOUBLE, GL_FALSE, 3 * sizeof(GLdouble), (void*) 0);
 
     GLuint gl_bo_index = 0;
     glGenBuffers(1, &gl_bo_index);
@@ -181,18 +191,23 @@ std::tuple<GLuint, GLuint, GLuint> rendering_to_gpu(const std::vector<GLuint>& i
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    return {gl_vao, gl_bo_vertex, gl_bo_index};
+    gl_vaos.push_back(gl_vao);
+    gl_vbos.insert(gl_vbos.end(), {gl_bo_vertex, gl_bo_normal, gl_bo_index});
+
+    return gl_vao;
 }
 
 
  
 ////////////////////////////////////////////////////////////////////////////////
 /// Cleans up all GLFW resources
-void rendering_cleanup(GLuint program, TraverseData* data_traverse)
+void rendering_cleanup(GLuint program)
 {
     glDeleteProgram(program);
-    glDeleteVertexArrays(data_traverse->gl_vaos.size(), data_traverse->gl_vaos.data());
-    glDeleteBuffers(data_traverse->gl_vaos.size(), data_traverse->gl_vaos.data());
+    glDeleteVertexArrays(gl_vaos.size(), gl_vaos.data());
+    glDeleteBuffers(gl_vbos.size(), gl_vbos.data());
+    gl_vbos.clear();
+    gl_vaos.clear();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

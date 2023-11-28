@@ -12,7 +12,6 @@
 /// * docs.techsoft3d.com/exchange/latest/tutorials/basic_viewing.html       ///
 ////////////////////////////////////////////////////////////////////////////////
 /// TODO list week 11-20-2023:
-/// - Prune down he_mesh_data_to_rendering code using Usability Phase 1 Feedback
 /// - Prune down traversal code using Usability Phase 2
 /// Expected results: about 250 lines of code removal. Less algorithm, less HE
 /// calls.
@@ -50,7 +49,7 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 ////////////////////////////////////////////////////////////////////////////////
 // Send the data in `mesh_data` to the rendering API, ready to be drawn.
 // GPU data is stored in `data_traverse` and is used later on by `rendering_loop()`
-std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data, TraverseData* const data_traverse);
+std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// MAIN FUNCTION
@@ -90,7 +89,7 @@ int main(int argc, char* argv[])
  
     /////////////////////////////////////////////
     // Clean up all window and graphics resources
-    rendering_cleanup(program, &data_traverse);
+    rendering_cleanup(program);
     rendering_cleanup_window(window);
 
     return EXIT_SUCCESS;
@@ -219,25 +218,25 @@ void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DM
     } else {
         A3DMeshData mesh_data;
         A3D_INITIALIZE_DATA(A3DMeshData, mesh_data);
-        A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data);
+        A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data, 0);
         if (code != A3D_SUCCESS)
         {
             A3DRWParamsTessellationData data_params_tess;
             A3D_INITIALIZE_DATA(A3DRWParamsTessellationData, data_params_tess);
             data_params_tess.m_eTessellationLevelOfDetail = kA3DTessLODMedium;
             A3DRiRepresentationItemComputeTessellation(hnd_ri, &data_params_tess);
-            A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data);
+            A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data, 0);
         }
         assert(code == A3D_SUCCESS);
 
         auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
         if(gl_iterator == data_traverse->ri_to_gl.end()) {
-            auto pair = he_mesh_data_to_rendering(&mesh_data, data_traverse);
+            auto pair = he_mesh_data_to_rendering(&mesh_data);
             gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
 
         // Release mesh data memory
-        A3DRiComputeMesh(0, 0, &mesh_data);
+        A3DRiComputeMesh(0, 0, &mesh_data, 0);
 
         SceneObject object;
         mat4x4_dup(object.mat_transform_model, mat_transform_world);
@@ -363,69 +362,21 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
 /// This function first prepares the data for the buffer memory and stores the
 /// buffer identifier into `data_traverse`.
 /// The identifiers are used later on for drawing by `rendering_loop()`.
-/// + Maybe rename this function.
-std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data, TraverseData* const data_traverse)
+std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data)
 {
-    // TODO About the 40 first lines (until gl.. calls) of this function are
-    // removed thanks to Usability Phase 1 feedback.
+    std::vector<GLdouble> vertex_buffer(mesh_data->m_pdCoords, mesh_data->m_pdCoords + mesh_data->m_uiCoordSize);
+    std::vector<GLdouble> normal_buffer(mesh_data->m_pdNormals, mesh_data->m_pdNormals + mesh_data->m_uiNormalSize);
 
-    std::vector<GLuint> index_buffer;
-    std::vector<GLdouble> vertex_buffer;
-
-    // Count the total number of indices
+    // Count the total number of indices, which is equal to 3 times the sum of triangle count per face
     // The buffer objects will have at max n_indices indices
     size_t n_indices = 0;
     for(A3DUns32 face_i = 0 ; face_i < mesh_data->m_uiFaceSize ; ++face_i) {
         n_indices += 3 * mesh_data->m_puiTriangleCountPerFace[face_i];
     }
+    std::vector<GLuint> index_buffer(mesh_data->m_puiVertexIndicesPerFace, mesh_data->m_puiVertexIndicesPerFace + n_indices);
 
-    // This map will serve as cache for the OpenGL indices
-    // vertex_index|normal_index -> gl_index
-    std::unordered_map<uint64_t, GLuint> index_cache;
-
-    for (A3DUns32 face_i = 0; face_i < mesh_data->m_uiFaceSize; ++face_i) {
-        A3DUns32 n_triangles = mesh_data->m_puiTriangleCountPerFace[face_i];
-        if (n_triangles == 0) {
-            continue;
-        }
-        const A3DUns32* ptr_coord_index = mesh_data->m_ppuiPointIndicesPerFace[face_i];
-        const A3DUns32* ptr_normal_index = mesh_data->m_ppuiNormalIndicesPerFace[face_i];
-
-        for (size_t vertex_i = 0 ; vertex_i < n_triangles * 3 ; ++vertex_i) {
-            A3DUns32 coord_index = *ptr_coord_index++;
-            A3DUns32 normal_index = *ptr_normal_index++;
-
-            uint64_t cache_key = ((uint64_t)coord_index << 32) | normal_index;
-            auto insertion = index_cache.insert({cache_key, vertex_buffer.size() / 6});
-
-            GLuint vertex_index = insertion.first->second;
-            if(insertion.second) {
-                auto x = mesh_data->m_pdCoords[coord_index];
-                auto y = mesh_data->m_pdCoords[coord_index+1];
-                auto z = mesh_data->m_pdCoords[coord_index+2];
-
-                // Create the coordinates
-                vertex_buffer.insert(vertex_buffer.end(), {
-                    mesh_data->m_pdCoords[coord_index],
-                    mesh_data->m_pdCoords[coord_index + 1],
-                    mesh_data->m_pdCoords[coord_index + 2],
-                    mesh_data->m_pdNormals[normal_index],
-                    mesh_data->m_pdNormals[normal_index + 1],
-                    mesh_data->m_pdNormals[normal_index + 2]
-                });
-            }
-            index_buffer.push_back(vertex_index);
-        }
-    }
-
-    std::tuple<GLuint, GLuint, GLuint> gl_ids = rendering_to_gpu(index_buffer, vertex_buffer);
-
-    // Store identifiers for later cleanup
-    data_traverse->gl_vaos.push_back(std::get<0>(gl_ids));
-    data_traverse->gl_vbos.push_back(std::get<1>(gl_ids));
-    data_traverse->gl_vbos.push_back(std::get<2>(gl_ids));
-
-    return {std::get<0>(gl_ids), (GLsizei)index_buffer.size()};
+    GLuint renderable_id = rendering_to_gpu(index_buffer, vertex_buffer, normal_buffer);
+    return {renderable_id, (GLsizei)index_buffer.size()};
 }
 
 
