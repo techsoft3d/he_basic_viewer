@@ -11,11 +11,6 @@
 /// * docs.techsoft3d.com/exchange/latest/tutorials/mesh-viewer-sample.html  ///
 /// * docs.techsoft3d.com/exchange/latest/tutorials/basic_viewing.html       ///
 ////////////////////////////////////////////////////////////////////////////////
-/// TODO list week 11-20-2023:
-/// - Prune down traversal code using Usability Phase 2
-/// Expected results: about 250 lines of code removal. Less algorithm, less HE
-/// calls.
-////////////////////////////////////////////////////////////////////////////////
 #include <cassert>
 
 #include "rendering.hpp"
@@ -30,25 +25,15 @@
 #define INPUT_FILE "/prc/_micro engine.prc"
 
 ////////////////////////////////////////////////////////////////////////////////
-// Traversal functions, one per entity type.
-void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse);
-void he_traverse_product_occurrence( A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
-void he_traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
-void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse);
+// Recursive tree traversal function used to retrieve drawable entities
+void he_traverse_tree(A3DTree* const hnd_tree, A3DTreeNode* const hnd_node, TraverseData* const data_traverse);
 
-// Recursively retrieve the part definition and transformation underlying a Product Occurrence
-A3DAsmPartDefinition*  he_get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po);
-A3DMiscTransformation* he_get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po);
-
-// Converts an A3DMiscTransformation to a linmath 4x4 transformation matrix
-// ready to be used in the graphics API
+////////////////////////////////////////////////////////////////////////////////
+// Utility function to convert A3DMiscTransformation object to 4x4 transform matrix
 void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation, mat4x4 mat_result);
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Exchange <-> Graphics
-////////////////////////////////////////////////////////////////////////////////
 // Send the data in `mesh_data` to the rendering API, ready to be drawn.
-// GPU data is stored in `data_traverse` and is used later on by `rendering_loop()`
 std::pair<GLuint, GLsizei> he_mesh_data_to_rendering(A3DMeshData* const mesh_data);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -72,9 +57,20 @@ int main(int argc, char* argv[])
     A3DAsmModelFile* model_file = he_loader.m_psModelFile;
 
     ////////////////////////////////////////////////////////
-    // CALL THE TRAVERSE FUNCTIONS ON THE LOADED MODEL FILE.
+    // TRAVERSE THE MODEL TREE
     TraverseData     data_traverse;
-    he_traverse_model_file(model_file, &data_traverse);
+    A3DTree*         hnd_tree = 0;
+
+    status = A3DTreeCompute(model_file, &hnd_tree, 0);
+    assert(status == A3D_SUCCESS);
+
+    A3DTreeNode* hnd_root_node = 0;
+    status = A3DTreeGetRootNode(hnd_tree, &hnd_root_node);
+    assert(status == A3D_SUCCESS);
+
+    he_traverse_tree(hnd_tree, hnd_root_node, &data_traverse);
+
+    A3DTreeCompute(0, &hnd_tree, 0);
 
     /////////////////////////////////////////////////////////
     // Everything is loaded to GPU, Exchange can be released.
@@ -84,7 +80,6 @@ int main(int argc, char* argv[])
  
     ///////////////////////////
     // Draw the scene on-screen
-    printf("Starting Loop\n");
     rendering_loop(window, program, data_traverse.objects.data(), data_traverse.objects.size());
  
     /////////////////////////////////////////////
@@ -95,210 +90,59 @@ int main(int argc, char* argv[])
     return EXIT_SUCCESS;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-//////////////////////      FUNCTION DEFINITIONS      //////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
-/// ENTRY-POINT OF THE TREE TRAVERSAL.
-/// Traverse the given model file instance and recursively visits the underlying
-/// product occurrence entities.
-/// The cascaded attributes and transform information are initialized and send
-/// to the next traversal functions.
-void he_traverse_model_file(A3DAsmModelFile* const hnd_modelfile, TraverseData* const data_traverse)
+// Recursive traversal function, initially called in main() on the root node.
+// The function:
+// - Extracts any geometry as A3DMeshData and send it to the GPU using he_mesh_data_to_rendering()
+// - Recursively calls itself on the child nodes
+void he_traverse_tree(A3DTree* const hnd_tree, A3DTreeNode* const hnd_node, TraverseData* const data_traverse)
 {
-    A3DMiscCascadedAttributes* hnd_attrs_modelfile = 0;
-    A3DMiscCascadedAttributesCreate(&hnd_attrs_modelfile);
+    // Extract the geometry as an A3DMeshData instance and send it to the GPU
+    // if the operation is successful.
+    A3DMeshData mesh_data;
+    A3D_INITIALIZE_DATA(A3DMeshData, mesh_data);
+    A3DStatus code = A3DTreeNodeGetGeometry(hnd_tree, hnd_node, A3D_TRUE, &mesh_data, 0);
 
-    A3DAsmModelFileData data_modelfile;
-    A3D_INITIALIZE_DATA(A3DAsmModelFileData, data_modelfile);
-    A3DStatus code = A3DAsmModelFileGet(hnd_modelfile, &data_modelfile);
-    assert(code == A3D_SUCCESS);
+    if(code == A3D_SUCCESS) {
 
-    mat4x4 mat_transform;
-    mat4x4_identity(mat_transform);
-
-    for (A3DUns32 po_i = 0 ; po_i < data_modelfile.m_uiPOccurrencesSize ; ++po_i) {
-        he_traverse_product_occurrence(data_modelfile.m_ppPOccurrences[po_i], hnd_attrs_modelfile, mat_transform, data_traverse);
-    }
-    
-    A3DAsmModelFileGet(0, &data_modelfile);
-    A3DMiscCascadedAttributesDelete(hnd_attrs_modelfile);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// INTERMEDIARY STEP OF THE TREE TRAVERSAL.
-/// Traverse a product occurrence and visits the underlying entities, which are
-/// either other product occurrences or part definition entities.
-/// Cascaded attributes and transform data are computed and accumulated for the
-/// next traverse calls.
-void he_traverse_product_occurrence(A3DAsmProductOccurrence* const hnd_po, A3DMiscCascadedAttributes* const hnd_attrs_parent, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
-{
-    A3DMiscCascadedAttributes* hnd_attrs_po = 0;
-    A3DMiscCascadedAttributesCreate(&hnd_attrs_po);
-    A3DMiscCascadedAttributesPush(hnd_attrs_po, hnd_po, hnd_attrs_parent);
-    A3DMiscCascadedAttributesEntityReferencePush(hnd_attrs_po, hnd_po, 0);
-
-    A3DAsmProductOccurrenceData data_po;
-    A3D_INITIALIZE_DATA(A3DAsmProductOccurrenceData, data_po);
-    A3DStatus code = A3DAsmProductOccurrenceGet(hnd_po, &data_po);
-    assert(code == A3D_SUCCESS);
-
-    A3DMiscTransformation* hnd_po_transformation = he_get_product_occurrence_transformation(hnd_po);
-    mat4x4 mat_transform_po_local, mat_transform_po_world;
-    he_transformation_to_mat4x4(hnd_po_transformation, mat_transform_po_local);
-    mat4x4_mul(mat_transform_po_world, mat_transform_world, mat_transform_po_local);
-
-    A3DAsmPartDefinition* hnd_part = he_get_product_occurrence_part_definition(hnd_po);
-    he_traverse_part_definition(hnd_part, hnd_attrs_po, mat_transform_po_world, data_traverse);
-
-    for (A3DUns32 po_i = 0 ; po_i < data_po.m_uiPOccurrencesSize ; ++po_i) {
-        he_traverse_product_occurrence(data_po.m_ppPOccurrences[po_i], hnd_attrs_po, mat_transform_po_world, data_traverse);
-    }
-
-    A3DAsmProductOccurrenceGet(0, &data_po);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// INTERMEDIARY STEP OF THE TREE TRAVERSAL.
-/// Traverse a part definition and visits the underlying representation item
-/// Cascaded attributes and transform data are computed and accumulated for the
-/// next traverse calls.
-void he_traverse_part_definition(A3DAsmPartDefinition* const hnd_part, A3DMiscCascadedAttributes* const hnd_attrs_po, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
-{
-    if(hnd_part == 0) {
-        return;
-    }
-
-    A3DMiscCascadedAttributes* hnd_attrs_part = 0;
-    A3DMiscCascadedAttributesCreate(&hnd_attrs_part);
-    A3DMiscCascadedAttributesPush(hnd_attrs_part, hnd_part, hnd_attrs_po);
-
-    A3DAsmPartDefinitionData data_part;
-    A3D_INITIALIZE_DATA(A3DAsmPartDefinitionData, data_part);
-    A3DStatus code = A3DAsmPartDefinitionGet(hnd_part, &data_part);
-    assert(code == A3D_SUCCESS);
-
-    for (A3DUns32 ri_i = 0 ; ri_i < data_part.m_uiRepItemsSize ; ++ri_i) {
-        he_traverse_representation_item(data_part.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
-    }
-
-    A3DAsmPartDefinitionGet(0, &data_part);
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-/// FINAL STEP OF THE TREE TRAVERSAL.
-/// Traverse a representation item entity.
-/// The main operation of this function is to call `A3DRiComputeMesh()` to
-/// generate an `A3DMeshData` instance before sending the latter to the GPU
-/// using `he_mesh_data_to_rendering()`.
-/// The transform and cascaded attributes information accumulated along the tree
-/// traversal are used in this step.
-///
-/// If the input representation item is an aggregate of several, the entity is
-/// first unfolded and `he_traverse_representation_item()` is recursively called
-/// for each of them.
-void he_traverse_representation_item(A3DRiRepresentationItem* const hnd_ri, A3DMiscCascadedAttributes* const hnd_attrs_part, const mat4x4 mat_transform_world, TraverseData* const data_traverse)
-{
-    A3DEEntityType ri_type = kA3DTypeUnknown;
-    A3DEntityGetType(hnd_ri, &ri_type);
-
-    if (ri_type == kA3DTypeRiSet) {
-        A3DRiSetData data_ri_set;
-        A3D_INITIALIZE_DATA(A3DRiSetData, data_ri_set);
-        A3DStatus code = A3DRiSetGet(hnd_ri, &data_ri_set);
-        assert(code == A3D_SUCCESS);
-
-        for(A3DUns32 ri_i = 0 ; ri_i < data_ri_set.m_uiRepItemsSize ; ++ri_i) {
-            he_traverse_representation_item(data_ri_set.m_ppRepItems[ri_i], hnd_attrs_part, mat_transform_world, data_traverse);
-        }
-
-        A3DRiSetGet(0, &data_ri_set);
-    } else {
-        A3DMeshData mesh_data;
-        A3D_INITIALIZE_DATA(A3DMeshData, mesh_data);
-        A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data, 0);
-        if (code != A3D_SUCCESS)
-        {
-            A3DRWParamsTessellationData data_params_tess;
-            A3D_INITIALIZE_DATA(A3DRWParamsTessellationData, data_params_tess);
-            data_params_tess.m_eTessellationLevelOfDetail = kA3DTessLODMedium;
-            A3DRiRepresentationItemComputeTessellation(hnd_ri, &data_params_tess);
-            A3DStatus code = A3DRiComputeMesh(hnd_ri, hnd_attrs_part, &mesh_data, 0);
-        }
-        assert(code == A3D_SUCCESS);
-
+        // Search for existing geometry, insert new one if new
+        A3DEntity* hnd_ri = 0;
+        A3DTreeNodeGetEntity(hnd_node, &hnd_ri);
         auto gl_iterator = data_traverse->ri_to_gl.find(hnd_ri);
         if(gl_iterator == data_traverse->ri_to_gl.end()) {
             auto pair = he_mesh_data_to_rendering(&mesh_data);
             gl_iterator = data_traverse->ri_to_gl.insert({hnd_ri, pair}).first;
         }
 
-        // Release mesh data memory
-        A3DRiComputeMesh(0, 0, &mesh_data, 0);
+        // Release the mesh data memory
+        A3DTreeNodeGetGeometry(0, 0, A3D_TRUE, &mesh_data, 0);
 
+        // Get the net transform of the node
+        A3DMiscTransformation* hnd_net_transform = 0;
+        A3DTreeNodeGetNetTransformation(hnd_node, &hnd_net_transform);
+
+        // Store the drawable object with the following information:
+        // - Net transform as a 4x4 matrix (.mat_transform_model)
+        // - Graphics API-side identifier (.gl_vao)
+        // - Number of vertex index used upon drawing (.gl_indices_count)
         SceneObject object;
-        mat4x4_dup(object.mat_transform_model, mat_transform_world);
+        he_transformation_to_mat4x4(hnd_net_transform, object.mat_transform_model);
         object.gl_vao = gl_iterator->second.first;
         object.gl_indices_count = gl_iterator->second.second;
         data_traverse->objects.push_back(object);
-
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// The underlying part definition a product occurence entity may not be directly
-/// accessed. Instead, it can be part of a prototype reference, or an external data.
-/// This function provides a one-call function that returns the correct part
-/// definition of a product occurrence, if available.
-/// The function is used in `he_traverse_product_occurrence()`
-A3DAsmPartDefinition* he_get_product_occurrence_part_definition(A3DAsmProductOccurrence* hnd_po)
-{
-    if(hnd_po == 0) {
-        return 0;
     }
 
-    A3DAsmProductOccurrenceData data_po;
-    A3D_INITIALIZE_DATA(A3DAsmProductOccurrenceData, data_po);
-    A3DStatus code = A3DAsmProductOccurrenceGet(hnd_po, &data_po);
+    // Recursively traverse the child nodes
+    A3DUns32 n_children        = 0;
+    A3DTreeNode** hnd_children = 0;
+
+    code = A3DTreeNodeGetChildren(hnd_tree, hnd_node, &n_children, &hnd_children);
     assert(code == A3D_SUCCESS);
-
-    A3DMiscTransformation* hnd_part = data_po.m_pPart;
-    if (hnd_part == 0) {
-        A3DAsmProductOccurrence* hnd_po_reference = data_po.m_pPrototype ? data_po.m_pPrototype : data_po.m_pExternalData;
-        hnd_part = he_get_product_occurrence_part_definition(hnd_po_reference);
+    for (size_t c = 0 ; c < n_children ; ++c) {
+        he_traverse_tree(hnd_tree, hnd_children[c], data_traverse);
     }
-
-    A3DAsmProductOccurrenceGet(0, &data_po);
-    return hnd_part;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// The underlying transformation a product occurence entity may not be directly
-/// accessed. Instead, it can be part of a prototype reference, or an external data.
-/// This function provides a one-call function that returns the correct
-/// transformation of a product occurrence, if available.
-/// The function is used in `he_traverse_product_occurrence()`
-A3DMiscTransformation* he_get_product_occurrence_transformation(A3DAsmProductOccurrence* hnd_po)
-{
-    if(hnd_po == 0) {
-        return 0;
-    }
-
-    A3DAsmProductOccurrenceData data_po;
-    A3D_INITIALIZE_DATA(A3DAsmProductOccurrenceData, data_po);
-    A3DStatus code = A3DAsmProductOccurrenceGet(hnd_po, &data_po);
-    assert(code == A3D_SUCCESS);
-
-    A3DMiscTransformation* hnd_po_transformation = data_po.m_pLocation;
-    if (hnd_po_transformation == 0) {
-        A3DAsmProductOccurrence* hnd_po_reference = data_po.m_pPrototype ? data_po.m_pPrototype : data_po.m_pExternalData;
-        hnd_po_transformation = he_get_product_occurrence_transformation(hnd_po_reference);
-    }
-
-    A3DAsmProductOccurrenceGet(0, &data_po);
-    return hnd_po_transformation;
+    A3DTreeNodeGetChildren(0, 0, &n_children, &hnd_children);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -350,11 +194,6 @@ void he_transformation_to_mat4x4(const A3DMiscTransformation* hnd_transformation
         A3DMiscCartesianTransformationGet(0, &data);
     }
 }
-
-////////////////////////////////////////////////////////////////////////////////
-/// Exchange <-> Graphics
-////////////////////////////////////////////////////////////////////////////////
-
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Pivot function that sends a mesh represented by `mesh_data` into the GPU.

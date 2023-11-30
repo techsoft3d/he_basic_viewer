@@ -42,7 +42,11 @@ void rendering_loop(GLFWwindow* window, GLuint program, const SceneObject* objec
         for(const SceneObject* object = object_start ; object <= object_start + n_objects ; ++object) {
             glUniformMatrix4fv(p_location, 1, GL_FALSE, (const GLfloat*) p);
             glUniformMatrix4fv(v_location, 1, GL_FALSE, (const GLfloat*) v);
+    printf("%d\n", __LINE__);
+            printf("m_location: %d\n", m_location);
+            printf("transfo: %x\n", object->mat_transform_model);
             glUniformMatrix4fv(m_location, 1, GL_FALSE, (const GLfloat*) object->mat_transform_model);
+    printf("%d\n", __LINE__);
 
             glBindVertexArray(object->gl_vao);
             glDrawElements(GL_TRIANGLES, object->gl_indices_count, GL_UNSIGNED_INT, 0);
